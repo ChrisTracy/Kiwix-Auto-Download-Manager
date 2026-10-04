@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kiwix manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+<style>
+:root {
+  --bg: #E6EBEE;
+  --surface: #F6F8F9;
+  --ink: #1C2733;
+  --muted: #586572;
+  --rule: #C7D0D7;
+  --accent: #2C6B5B;
+  --accent-ink: #FFFFFF;
+  --amber: #9A5B14;
+  --red: #A23838;
+  --track: #D3DBE0;
+  --serif: "Iowan Old Style", "Charter", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  color-scheme: light;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131A21; --surface: #1A232C; --ink: #E2E7EB; --muted: #95A2AE;
+    --rule: #2B3742; --accent: #6DBBA5; --accent-ink: #0F1A17;
+    --amber: #E0A45C; --red: #E67C7C; --track: #26323C;
+    color-scheme: dark;
+  }
+}
+*, *::before, *::after { box-sizing: inherit; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+main { max-width: 680px; margin: 0 auto; padding: 28px 20px 64px; }
+
+header.top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+header.top h1 { font: 600 1rem/1.2 var(--sans); margin: 0; color: var(--muted); }
+.pill { display: inline-flex; align-items: center; gap: 8px; font-size: .875rem; color: var(--muted); text-decoration: none; }
+.pill::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.pill[data-s="up"]::before { background: var(--accent); }
+.pill[data-s="down"]::before { background: var(--red); }
+.pill[data-s="unknown"]::before { background: var(--amber); }
+a.pill:hover { color: var(--ink); }
+
+/* The edition: the one loud thing on the page */
+.edition { margin: 44px 0 8px; }
+.edition .lang { font: 400 1.375rem/1.2 var(--serif); margin: 0; }
+.edition .date {
+  font: 400 clamp(3.25rem, 13vw, 5.75rem)/0.95 var(--serif);
+  letter-spacing: -0.02em;
+  margin: 6px 0 14px;
+  font-variant-numeric: oldstyle-nums;
+}
+.edition .date.empty { font-size: clamp(2.25rem, 8vw, 3.5rem); color: var(--muted); }
+.edition .desc { margin: 0; max-width: 60ch; }
+.facts { color: var(--muted); font-size: .9375rem; margin: 6px 0 0; max-width: 62ch; }
+.newer { color: var(--amber); }
+
+.actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 24px; }
+button, select {
+  font: inherit; color: inherit;
+}
+button {
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+  padding: 9px 16px; border-radius: 8px; cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.job { margin-top: 24px; }
+.job[hidden] { display: none; }
+.job .line { display: flex; justify-content: space-between; gap: 12px; font-size: .9375rem; font-variant-numeric: tabular-nums; }
+.bar { height: 10px; background: var(--track); border-radius: 5px; overflow: hidden; margin: 8px 0 12px; }
+.bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .6s ease; }
+.bar.indeterminate > span { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+.error { margin-top: 20px; padding: 12px 14px; border-left: 3px solid var(--red); background: var(--surface); color: var(--ink); }
+.error[hidden] { display: none; }
+
+section { margin-top: 52px; padding-top: 22px; border-top: 1px solid var(--rule); }
+section h2 { font: 400 1.5rem/1.2 var(--serif); margin: 0 0 18px; }
+
+.form { display: grid; gap: 18px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+label.field { display: grid; gap: 6px; font-size: .9375rem; font-weight: 600; }
+label.field small { font-weight: 400; color: var(--muted); }
+label.field select, label.field input, label.field button { font-weight: 400; }
+select {
+  width: 100%; padding: 9px 36px 9px 12px; border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23889' stroke-width='1.6'/%3E%3C/svg%3E") no-repeat right 12px center;
+  appearance: none; -webkit-appearance: none;
+}
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: .9375rem; }
+.check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); }
+.check span small { display: block; color: var(--muted); }
+.saved { font-size: .9375rem; color: var(--muted); }
+.saved.bad { color: var(--red); }
+
+.stored { list-style: none; padding: 0; margin: 0 0 6px; font-size: .9375rem; }
+.stored li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+.stored li .live { color: var(--accent); font-weight: 600; }
+.disk { color: var(--muted); font-size: .875rem; }
+
+ol.log { list-style: none; padding: 0; margin: 0; font-size: .9375rem; max-height: 360px; overflow-y: auto; }
+ol.log li { display: grid; grid-template-columns: 7.5em 1fr; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
+ol.log time { color: var(--muted); font-variant-numeric: tabular-nums; }
+ol.log li[data-l="error"] span { color: var(--red); }
+ol.log li[data-l="warn"] span { color: var(--amber); }
+.empty-note { color: var(--muted); }
+.fname { overflow-wrap: anywhere; }
+
+fieldset.sched { border: 0; padding: 0; margin: 0; display: grid; gap: 16px; min-width: 0; }
+fieldset.sched legend { font-weight: 600; font-size: .9375rem; padding: 0; margin-bottom: 6px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+[data-for][hidden], [data-by][hidden] { display: none !important; }
+input[type=number], input[type=text], input[type=time] {
+  font: inherit; color: inherit; width: 100%; padding: 8px 12px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--surface);
+}
+input[type=text]#s-cron { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.hint { margin: 0; font-size: .875rem; color: var(--muted); max-width: 62ch; }
+.field-group { display: grid; gap: 14px; }
+button.link { background: none; border: 0; padding: 2px 0; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; font-size: .875rem; justify-self: start; }
+.quick { display: flex; gap: 18px; margin-top: 10px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips label, .seg label { position: relative; cursor: pointer; }
+.chips input, .seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.chips span {
+  display: inline-grid; place-items: center; min-width: 3.25em; padding: 8px 10px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); font-size: .9375rem;
+}
+.chips input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.chips input:focus-visible + span, .seg input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; justify-self: start; }
+.seg span { display: block; padding: 7px 14px; font-size: .9375rem; background: var(--surface); }
+.seg label + label span { border-left: 1px solid var(--rule); }
+.seg input:checked + span { background: var(--ink); color: var(--bg); }
+
+.preview { background: var(--surface); border-radius: 8px; padding: 12px 14px; }
+.preview-title { margin: 0 0 6px; font-size: .875rem; color: var(--muted); }
+.preview ol { margin: 0; padding-left: 1.4em; font-variant-numeric: tabular-nums; }
+.preview li { padding: 1px 0; }
+.preview .bad { margin: 0; color: var(--red); font-size: .9375rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bar > span { transition: none; }
+  .bar.indeterminate > span { animation: none; width: 100%; opacity: .5; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <h1>Kiwix manager</h1>
+    <a class="pill" id="pill" data-s="unknown" target="_blank" rel="noopener">Checking library</a>
+  </header>
+
+  <div class="edition" aria-live="polite">
+    <p class="lang" id="ed-lang">&nbsp;</p>
+    <p class="date" id="ed-date">&nbsp;</p>
+    <p class="desc" id="ed-desc"></p>
+    <p class="facts" id="ed-facts"></p>
+  </div>
+
+  <div class="actions">
+    <button class="primary" id="btn-check">Check now</button>
+    <button id="btn-cancel" hidden>Cancel download</button>
+  </div>
+
+  <div class="job" id="job" hidden>
+    <div class="line"><span id="job-title"></span><span id="job-pct"></span></div>
+    <div class="bar" id="bar"><span></span></div>
+    <div class="line" style="color:var(--muted)"><span id="job-bytes"></span><span id="job-eta"></span></div>
+  </div>
+
+  <div class="error" id="err" hidden></div>
+
+  <section aria-labelledby="h-settings">
+    <h2 id="h-settings">Settings</h2>
+    <div class="form">
+      <div class="row">
+        <label class="field">Language
+          <select id="f-lang" disabled><option>Loading catalog…</option></select>
+        </label>
+        <label class="field">Edition
+          <select id="f-flavor" disabled></select>
+        </label>
+      </div>
+      <fieldset class="sched" id="sched">
+        <legend>Check for new editions</legend>
+        <label class="field">
+          <span class="sr">Schedule type</span>
+          <select id="s-mode">
+            <option value="manual">Only when I click Check now</option>
+            <option value="interval">Every set amount of time</option>
+            <option value="daily">Every day at a set time</option>
+            <option value="weekly">On chosen days of the week</option>
+            <option value="monthly">Once a month</option>
+            <option value="cron">Custom cron expression</option>
+          </select>
+        </label>
+
+        <div class="row" data-for="interval">
+          <label class="field">Every
+            <input type="number" id="s-every" min="1" step="1" inputmode="numeric">
+          </label>
+          <label class="field">Unit
+            <select id="s-unit">
+              <option value="minutes">minutes</option>
+              <option value="hours">hours</option>
+              <option value="days">days</option>
+              <option value="weeks">weeks</option>
+            </select>
+          </label>
+        </div>
+
+        <div data-for="weekly">
+          <div class="chips" id="s-days" role="group" aria-label="Days of the week"></div>
+          <div class="quick">
+            <button type="button" class="link" data-days="1,2,3,4,5">Weekdays</button>
+            <button type="button" class="link" data-days="0,6">Weekends</button>
+            <button type="button" class="link" data-days="0,1,2,3,4,5,6">Every day</button>
+          </div>
+        </div>
+
+        <div data-for="monthly" class="field-group">
+          <div class="seg" role="radiogroup" aria-label="Monthly by">
+            <label><input type="radio" name="s-by" value="date"><span>On a date</span></label>
+            <label><input type="radio" name="s-by" value="weekday"><span>On a weekday</span></label>
+          </div>
+          <div class="row" data-by="date">
+            <label class="field">Day of the month
+              <select id="s-dom"></select>
+            </label>
+          </div>
+          <p class="hint" id="s-dom-hint" hidden>Months without that date are skipped. Choose Last day to run every month.</p>
+          <div class="row" data-by="weekday">
+            <label class="field">Which
+              <select id="s-nth">
+                <option value="1">First</option>
+                <option value="2">Second</option>
+                <option value="3">Third</option>
+                <option value="4">Fourth</option>
+                <option value="5">Fifth</option>
+                <option value="-1">Last</option>
+              </select>
+            </label>
+            <label class="field">Weekday
+              <select id="s-weekday"></select>
+            </label>
+          </div>
+        </div>
+
+        <div data-for="cron">
+          <label class="field">Cron expression
+            <input type="text" id="s-cron" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="0 4 * * sun">
+          </label>
+          <p class="hint">Five fields: minute, hour, day of month, month, day of week. Lists (1,15), ranges (mon-fri), steps (*/6) and names work. Extras: L for the last day of the month, sun#2 for the second Sunday, 5L for the last Friday, and shortcuts like @daily.</p>
+        </div>
+
+        <div class="row" data-for="daily weekly monthly cron">
+          <label class="field" data-for="daily weekly monthly">Time
+            <input type="time" id="s-time" required>
+          </label>
+          <label class="field">Time zone
+            <select id="s-tz"></select>
+            <button type="button" class="link" id="s-mytz" hidden></button>
+          </label>
+        </div>
+
+        <label class="check" data-for="interval daily weekly monthly cron">
+          <input type="checkbox" id="s-catchup">
+          <span>Run a missed check at startup
+            <small>If the manager was off when a check was due, run it as soon as it starts again.</small>
+          </span>
+        </label>
+
+        <div class="preview" data-for="interval daily weekly monthly cron">
+          <p class="preview-title">Next checks with these settings</p>
+          <ol id="s-preview"></ol>
+          <p class="bad" id="s-err" hidden></p>
+        </div>
+        <p class="hint">Kiwix publishes new Wikipedia editions every month or two. A check only downloads when a newer edition exists.</p>
+      </fieldset>
+      <label class="check">
+        <input type="checkbox" id="f-keep">
+        <span>Keep previous editions
+          <small>Off: the old file is deleted once the new one is live, which frees the space.</small>
+        </span>
+      </label>
+      <div class="actions" style="margin-top:4px">
+        <button class="primary" id="btn-save">Save settings</button>
+        <span class="saved" id="saved" role="status"></span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-disk">
+    <h2 id="h-disk">On disk</h2>
+    <ul class="stored" id="stored"></ul>
+    <p class="disk" id="disk"></p>
+  </section>
+
+  <section aria-labelledby="h-log">
+    <h2 id="h-log">Activity</h2>
+    <ol class="log" id="log"></ol>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let catalog = null, status = null, formLoaded = false;
+
+const langNames = (() => {
+  try { return new Intl.DisplayNames([navigator.language || "en"], { type: "language" }); } catch { return null; }
+})();
+function langName(code) {
+  try { const n = langNames && langNames.of(code); if (n && n.toLowerCase() !== code) return n; } catch {}
+  return code;
+}
+const KNOWN = {
+  all_maxi: "Everything, with images",
+  all_nopic: "Everything, no images",
+  all_mini: "Article intros only",
+};
+function flavorName(f) {
+  if (KNOWN[f]) return KNOWN[f];
+  const parts = f.split("_");
+  const kind = { maxi: "with images", nopic: "no images", mini: "intros only" }[parts[parts.length - 1]];
+  if (kind) parts.pop();
+  let scope = parts.join(" ").replace(/^top$/, "top articles").replace(/^all$/, "everything");
+  scope = scope.charAt(0).toUpperCase() + scope.slice(1);
+  return kind ? `${scope}, ${kind}` : scope;
+}
+const FLAVOR_ORDER = ["all_maxi", "all_nopic", "all_mini"];
+function monthName(ym) {
+  if (!ym) return "";
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+}
+function bytes(n) {
+  if (n == null) return "unknown size";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n.toFixed(0) : n.toFixed(n < 10 ? 1 : 0)) + " " + u[i];
+}
+const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+function rel(isoStr) {
+  if (!isoStr) return null;
+  const s = (new Date(isoStr) - Date.now()) / 1000, a = Math.abs(s);
+  if (a < 60) return s < 0 ? "just now" : "in under a minute";
+  if (a < 3600) return rtf.format(Math.round(s / 60), "minute");
+  if (a < 86400) return rtf.format(Math.round(s / 3600), "hour");
+  return rtf.format(Math.round(s / 86400), "day");
+}
+function duration(sec) {
+  if (!isFinite(sec) || sec <= 0) return "";
+  if (sec < 60) return `${Math.ceil(sec)} s left`;
+  if (sec < 3600) return `${Math.ceil(sec / 60)} min left`;
+  return `${(sec / 3600).toFixed(1)} h left`;
+}
+function parseName(file) {
+  const m = file && file.match(/^wikipedia_([a-z0-9-]+)_([a-z0-9_]+?)_(\d{4}-\d{2})\.zim$/);
+  return m ? { lang: m[1], flavor: m[2], date: m[3] } : null;
+}
+
+async function api(path, body) {
+  const opts = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
+  return data;
+}
+
+/* ---------- settings form ---------- */
+function fillLangs(selected) {
+  const sel = $("f-lang");
+  const codes = Object.keys(catalog).sort((a, b) => langName(a).localeCompare(langName(b)));
+  if (selected && !catalog[selected]) codes.unshift(selected);
+  sel.replaceChildren(...codes.map(c => {
+    const o = new Option(`${langName(c)} (${c})`, c);
+    if (!catalog[c]) o.text += " — not published";
+    return o;
+  }));
+  sel.value = selected;
+  sel.disabled = false;
+}
+function fillFlavors(lang, selected) {
+  const sel = $("f-flavor");
+  const avail = catalog[lang] || {};
+  const flavors = Object.keys(avail).sort((a, b) => {
+    const ia = FLAVOR_ORDER.indexOf(a), ib = FLAVOR_ORDER.indexOf(b);
+    if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return flavorName(a).localeCompare(flavorName(b));
+  });
+  sel.replaceChildren(...flavors.map(f => new Option(`${flavorName(f)} (${monthName(avail[f])})`, f)));
+  if (selected && avail[selected]) sel.value = selected;
+  sel.disabled = flavors.length === 0;
+}
+/* ---------- schedule builder ---------- */
+const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];  // Monday first
+function weekdayName(d, style = "short") {
+  // 2023-01-01 was a Sunday
+  return new Date(Date.UTC(2023, 0, 1 + d)).toLocaleDateString(undefined, { weekday: style, timeZone: "UTC" });
+}
+function ordinal(n) {
+  try {
+    const pr = new Intl.PluralRules("en", { type: "ordinal" });
+    return n + ({ one: "st", two: "nd", few: "rd" }[pr.select(n)] || "th");
+  } catch { return String(n); }
+}
+(function buildScheduleControls() {
+  $("s-days").replaceChildren(...WEEK_ORDER.map(d => {
+    const l = document.createElement("label");
+    l.innerHTML = `<input type="checkbox" value="${d}"><span></span>`;
+    l.querySelector("span").textContent = weekdayName(d);
+    l.querySelector("input").setAttribute("aria-label", weekdayName(d, "long"));
+    return l;
+  }));
+  const dom = $("s-dom");
+  for (let i = 1; i <= 31; i++) dom.add(new Option(ordinal(i), String(i)));
+  dom.add(new Option("Last day", "L"));
+  $("s-weekday").replaceChildren(...WEEK_ORDER.map(d => new Option(weekdayName(d, "long"), String(d))));
+  let zones = [];
+  try { zones = Intl.supportedValuesOf("timeZone"); } catch {}
+  zones = [...new Set(["UTC", BROWSER_TZ, ...zones])].sort((a, b) => a === "UTC" ? -1 : b === "UTC" ? 1 : a.localeCompare(b));
+  $("s-tz").replaceChildren(...zones.map(z => new Option(z.replace(/_/g, " "), z)));
+  $("s-mytz").textContent = `Use my time zone (${BROWSER_TZ.replace(/_/g, " ")})`;
+})();
+
+function setTz(tz) {
+  const sel = $("s-tz");
+  if (![...sel.options].some(o => o.value === tz)) sel.add(new Option(tz, tz));
+  sel.value = tz;
+  $("s-mytz").hidden = tz === BROWSER_TZ;
+}
+function syncScheduleVisibility() {
+  const mode = $("s-mode").value;
+  document.querySelectorAll("#sched [data-for]").forEach(el => {
+    el.hidden = !el.dataset.for.split(" ").includes(mode);
+  });
+  const by = (document.querySelector('input[name="s-by"]:checked') || {}).value || "date";
+  document.querySelectorAll("#sched [data-by]").forEach(el => { el.hidden = el.dataset.by !== by; });
+  $("s-dom-hint").hidden = !(mode === "monthly" && by === "date" && Number($("s-dom").value) > 28);
+}
+function loadSchedule(s) {
+  $("s-mode").value = s.mode;
+  $("s-every").value = s.every;
+  $("s-unit").value = s.unit;
+  $("s-time").value = s.time;
+  $("s-cron").value = s.cron;
+  $("s-dom").value = s.day_of_month;
+  $("s-nth").value = String(s.nth);
+  $("s-weekday").value = String(s.weekday);
+  document.querySelectorAll('input[name="s-by"]').forEach(r => { r.checked = r.value === s.monthly_by; });
+  document.querySelectorAll("#s-days input").forEach(cb => { cb.checked = s.days.includes(Number(cb.value)); });
+  $("s-catchup").checked = !!s.catch_up;
+  setTz(s.tz);
+  syncScheduleVisibility();
+}
+function collectSchedule() {
+  return {
+    mode: $("s-mode").value,
+    every: Number($("s-every").value),
+    unit: $("s-unit").value,
+    time: $("s-time").value,
+    days: [...document.querySelectorAll("#s-days input:checked")].map(cb => Number(cb.value)),
+    monthly_by: (document.querySelector('input[name="s-by"]:checked') || {}).value || "date",
+    day_of_month: $("s-dom").value,
+    nth: Number($("s-nth").value),
+    weekday: Number($("s-weekday").value),
+    cron: $("s-cron").value,
+    tz: $("s-tz").value,
+    catch_up: $("s-catchup").checked,
+  };
+}
+function fmtWhen(isoStr, tz) {
+  const d = new Date(isoStr);
+  const opts = { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" };
+  try { return d.toLocaleString(undefined, { ...opts, timeZone: tz }); } catch { return d.toLocaleString(undefined, opts); }
+}
+let previewTimer;
+function schedulePreview() {
+  syncScheduleVisibility();
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    const sch = collectSchedule();
+    const err = $("s-err"), ol = $("s-preview");
+    if (sch.mode === "manual") return;
+    try {
+      const res = await api("/api/preview", { schedule: sch });
+      const tz = sch.mode === "interval" ? BROWSER_TZ : res.tz;
+      const now = Date.now();
+      ol.replaceChildren(...res.upcoming.map(t => {
+        const li = document.createElement("li");
+        li.textContent = new Date(t) - now < 30000 ? `Right away (${fmtWhen(t, tz)})` : `${fmtWhen(t, tz)} (${rel(t)})`;
+        return li;
+      }));
+      err.hidden = true;
+    } catch (e) {
+      ol.replaceChildren();
+      err.hidden = false; err.textContent = e.message;
+    }
+  }, 250);
+}
+$("sched").addEventListener("input", schedulePreview);
+$("sched").addEventListener("change", schedulePreview);
+document.querySelectorAll(".quick [data-days]").forEach(b => b.addEventListener("click", () => {
+  const want = b.dataset.days.split(",").map(Number);
+  document.querySelectorAll("#s-days input").forEach(cb => { cb.checked = want.includes(Number(cb.value)); });
+  schedulePreview();
+}));
+$("s-mytz").addEventListener("click", () => { setTz(BROWSER_TZ); schedulePreview(); });
+$("s-tz").addEventListener("change", e => setTz(e.target.value));
+
+function describeSchedule(s) {
+  const tzNote = s.tz !== BROWSER_TZ ? ` (${s.tz.replace(/_/g, " ")} time)` : "";
+  switch (s.mode) {
+    case "manual": return "Automatic checks are off.";
+    case "interval": return `Checks every ${s.every === 1 ? s.unit.replace(/s$/, "") : `${s.every} ${s.unit}`}.`;
+    case "daily": return `Checks every day at ${s.time}${tzNote}.`;
+    case "weekly": {
+      const d = s.days;
+      const names = d.length === 7 ? "every day" :
+        d.join() === "1,2,3,4,5" ? "on weekdays" :
+        d.join() === "0,6" ? "on weekends" :
+        "on " + WEEK_ORDER.filter(x => d.includes(x)).map(x => weekdayName(x, "long")).join(", ");
+      return `Checks ${names} at ${s.time}${tzNote}.`;
+    }
+    case "monthly": {
+      const when = s.monthly_by === "weekday"
+        ? `on the ${s.nth === -1 ? "last" : ordinal(s.nth)} ${weekdayName(s.weekday, "long")} of each month`
+        : s.day_of_month === "L" ? "on the last day of each month" : `on the ${ordinal(Number(s.day_of_month))} of each month`;
+      return `Checks ${when} at ${s.time}${tzNote}.`;
+    }
+    case "cron": return `Checks on the cron schedule ${s.cron}${tzNote}.`;
+  }
+  return "";
+}
+
+function loadForm(cfg) {
+  if (catalog) { fillLangs(cfg.lang); fillFlavors(cfg.lang, cfg.flavor); }
+  loadSchedule(cfg.schedule);
+  $("f-keep").checked = !!cfg.keep_old;
+  formLoaded = true;
+  schedulePreview();
+}
+$("f-lang").addEventListener("change", e => fillFlavors(e.target.value, $("f-flavor").value));
+
+$("btn-save").addEventListener("click", async () => {
+  const msg = $("saved");
+  msg.className = "saved"; msg.textContent = "Saving…";
+  try {
+    const res = await api("/api/config", {
+      lang: $("f-lang").value,
+      flavor: $("f-flavor").value,
+      schedule: collectSchedule(),
+      keep_old: $("f-keep").checked,
+    });
+    msg.textContent = res.started ? "Saved. Getting the new edition now." : "Saved.";
+    refresh();
+  } catch (e) {
+    msg.className = "saved bad"; msg.textContent = e.message;
+  }
+});
+
+/* ---------- actions ---------- */
+$("btn-check").addEventListener("click", async () => {
+  $("btn-check").disabled = true;
+  try { await api("/api/check", {}); } catch (e) { showError(e.message); }
+  setTimeout(refresh, 400);
+});
+$("btn-cancel").addEventListener("click", async () => {
+  $("btn-cancel").disabled = true;
+  try { await api("/api/cancel", {}); } catch (e) { showError(e.message); }
+  setTimeout(refresh, 400);
+});
+function showError(text) { const el = $("err"); el.hidden = !text; el.textContent = text || ""; }
+
+/* ---------- render ---------- */
+function render(s) {
+  status = s;
+  if (!formLoaded) loadForm(s.config);
+
+  // Library link
+  const pill = $("pill");
+  pill.href = `${location.protocol}//${location.hostname}:${s.kiwix_port}/`;
+  const c = s.container;
+  if (c === "running") { pill.dataset.s = "up"; pill.textContent = "Library online"; }
+  else if (c === "missing") { pill.dataset.s = "down"; pill.textContent = "kiwix container not found"; }
+  else if (c) { pill.dataset.s = "down"; pill.textContent = `Library ${c}`; }
+  else { pill.dataset.s = "unknown"; pill.textContent = "Can't reach Docker"; }
+
+  // Edition hero
+  const cur = s.current;
+  if (cur && cur.date) {
+    $("ed-lang").textContent = `${langName(cur.lang)} Wikipedia`;
+    $("ed-date").textContent = monthName(cur.date);
+    $("ed-date").className = "date";
+    $("ed-desc").textContent = `${flavorName(cur.flavor)}. ${bytes(cur.size)} on disk.`;
+  } else {
+    $("ed-lang").textContent = `${langName(s.config.lang)} Wikipedia`;
+    $("ed-date").textContent = "Not installed yet";
+    $("ed-date").className = "date empty";
+    $("ed-desc").textContent = "Nothing is being served. Pick a language and edition below and save, or click Check now to get the edition shown.";
+  }
+
+  const facts = [];
+  const latest = parseName(s.latest_available);
+  if (latest && cur && s.latest_available !== cur.file) {
+    facts.push(`<span class="newer">${monthName(latest.date)} is the newest ${flavorName(latest.flavor).toLowerCase()} edition.</span>`);
+  }
+  if (s.last_check) facts.push(`Last checked ${rel(s.last_check)}.`);
+  facts.push(describeSchedule(s.config.schedule));
+  if (s.next_check && s.phase === "idle") {
+    const tz = s.config.schedule.mode === "interval" ? BROWSER_TZ : s.config.schedule.tz;
+    const retry = s.retry_at && s.retry_at === s.next_check ? " to retry after the error" : "";
+    facts.push(new Date(s.next_check) <= Date.now() ? "Next check is starting." : `Next check ${fmtWhen(s.next_check, tz)}${retry} (${rel(s.next_check)}).`);
+  }
+  $("ed-facts").innerHTML = facts.join(" ");
+
+  // Job progress
+  const busy = s.phase !== "idle";
+  $("btn-check").disabled = busy;
+  $("btn-check").textContent = busy ? "Working…" : "Check now";
+  const cancellable = s.phase === "downloading" || s.phase === "verifying";
+  $("btn-cancel").hidden = !cancellable;
+  if (cancellable) $("btn-cancel").disabled = false;
+
+  const job = $("job"), bar = $("bar");
+  job.hidden = !busy;
+  if (busy) {
+    const titles = {
+      checking: "Looking for a newer edition",
+      downloading: "Downloading",
+      verifying: "Verifying the checksum",
+      restarting: "Restarting the library",
+    };
+    $("job-title").textContent = titles[s.phase] || s.phase;
+    const p = s.progress;
+    if (p && p.total) {
+      const pct = Math.min(100, (p.done / p.total) * 100);
+      bar.classList.remove("indeterminate");
+      bar.firstElementChild.style.width = pct.toFixed(1) + "%";
+      $("job-pct").textContent = pct.toFixed(pct < 10 ? 1 : 0) + "%";
+      $("job-bytes").textContent = `${bytes(p.done)} of ${bytes(p.total)}` + (p.rate ? `, ${bytes(p.rate)}/s` : "");
+      $("job-eta").textContent = p.rate ? duration((p.total - p.done) / p.rate) : "";
+    } else {
+      bar.classList.add("indeterminate");
+      bar.firstElementChild.style.width = "";
+      $("job-pct").textContent = "";
+      $("job-bytes").textContent = p ? bytes(p.done) : "";
+      $("job-eta").textContent = "";
+    }
+  }
+
+  showError(s.last_error && !busy ? s.last_error : "");
+
+  // Disk
+  const ul = $("stored");
+  if (s.stored.length) {
+    ul.replaceChildren(...s.stored.map(f => {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "fname";
+      name.textContent = f.file;
+      const size = document.createElement("span");
+      size.textContent = bytes(f.size);
+      if (cur && f.file === cur.file) {
+        const live = document.createElement("span");
+        live.className = "live"; live.textContent = " serving";
+        name.append(live);
+      }
+      li.append(name, size);
+      return li;
+    }));
+  } else {
+    const li = document.createElement("li");
+    li.className = "empty-note"; li.textContent = "No editions downloaded yet.";
+    ul.replaceChildren(li);
+  }
+  $("disk").textContent = `${bytes(s.disk.free)} free of ${bytes(s.disk.total)}.`;
+
+  // Log
+  const ol = $("log");
+  if (s.log.length) {
+    ol.replaceChildren(...s.log.map(e => {
+      const li = document.createElement("li");
+      li.dataset.l = e.level;
+      const t = document.createElement("time");
+      const d = new Date(e.t);
+      t.dateTime = e.t;
+      t.textContent = d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
+        d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      const m = document.createElement("span");
+      m.textContent = e.msg;
+      li.append(t, m);
+      return li;
+    }));
+  } else {
+    const li = document.createElement("li");
+    li.className = "empty-note"; li.textContent = "Nothing has happened yet.";
+    ol.replaceChildren(li);
+  }
+}
+
+let timer;
+async function refresh() {
+  clearTimeout(timer);
+  try { render(await api("/api/status")); }
+  catch (e) { showError(`Can't reach the manager: ${e.message}`); }
+  timer = setTimeout(refresh, status && status.phase !== "idle" ? 1500 : 5000);
+}
+
+async function loadCatalog() {
+  try {
+    catalog = (await api("/api/catalog")).catalog;
+    if (status) { fillLangs(status.config.lang); fillFlavors(status.config.lang, status.config.flavor); }
+  } catch (e) {
+    $("f-lang").replaceChildren(new Option("Catalog unavailable", ""));
+    showError(e.message);
+  }
+}
+
+refresh().then(loadCatalog);
+</script>
+</body>
+</html>
