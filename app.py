@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""Kiwix manager: keeps a Wikipedia ZIM fresh and restarts kiwix-serve.
+"""Kiwix manager: keeps a Wikipedia ZIM fresh and points kiwix-serve at it.
 
-Standard library only. Talks to Docker over the mounted unix socket.
+Standard library only (plus the kiwix-manage binary). kiwix-serve runs with
+--monitorLibrary, so rewriting library.xml is enough to switch editions:
+no restart and no Docker socket needed.
 """
 import base64
 import collections
 import datetime as dt
 import hashlib
 import hmac
-import http.client
 import json
 import os
 import re
 import shutil
-import socket
+import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from xml.etree import ElementTree
 
 import schedule as sched
 
@@ -28,9 +30,12 @@ STATE_DIR = DATA_DIR / ".manager"
 STATE_FILE = STATE_DIR / "state.json"
 LINK_NAME = os.environ.get("LINK_NAME", "wikipedia.zim")
 BASE_URL = os.environ.get("BASE_URL", "https://download.kiwix.org/zim/wikipedia/")
-CONTAINER = os.environ.get("KIWIX_CONTAINER", "kiwix")
+LIBRARY_FILE = DATA_DIR / os.environ.get("LIBRARY_NAME", "library.xml")
+KIWIX_URL = os.environ.get("KIWIX_URL", "http://kiwix:8080").rstrip("/")
 KIWIX_PORT = os.environ.get("KIWIX_PORT", "8080")
-DOCKER_SOCK = os.environ.get("DOCKER_SOCK", "/var/run/docker.sock")
+KIWIX_MANAGE = os.environ.get("KIWIX_MANAGE", "kiwix-manage")
+RELOAD_TIMEOUT = 120  # how long to wait for kiwix-serve to pick up a new library.xml
+EMPTY_LIBRARY = '<?xml version="1.0" encoding="UTF-8" ?>\n<library version="20110515"></library>\n'
 PORT = int(os.environ.get("PORT", "8090"))
 PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 CATALOG_TTL = 6 * 3600
@@ -80,26 +85,17 @@ def fmt(n):
         n /= 1024
 
 
-class UnixHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, path, timeout):
-        super().__init__("localhost", timeout=timeout)
-        self.sock_path = path
-
-    def connect(self):
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(self.timeout)
-        s.connect(self.sock_path)
-        self.sock = s
-
-
-def docker(method, path, timeout=60):
-    conn = UnixHTTPConnection(DOCKER_SOCK, timeout)
+def kiwix_get(path, timeout=3):
+    """GET a kiwix-serve URL; returns the HTTP status, or None if it can't be reached."""
     try:
-        conn.request(method, path, headers={"Host": "docker"})
-        r = conn.getresponse()
-        return r.status, r.read()
-    finally:
-        conn.close()
+        req = urllib.request.Request(KIWIX_URL + path, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            r.read(1 << 16)
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except Exception:
+        return None
 
 
 class Manager:
@@ -126,7 +122,7 @@ class Manager:
         self.schedule_since = saved.get("schedule_since") or self.started_at
         self.last_check = saved.get("last_check")
         self.retry_at = saved.get("retry_at")
-        self.served = saved.get("served")  # file kiwix was last restarted onto
+        self.served = saved.get("served")  # file library.xml was last pointed at
 
     # ---------- persistence and logging ----------
     def _load(self):
@@ -178,13 +174,7 @@ class Manager:
         return min(candidates) if candidates else None
 
     def container_state(self):
-        try:
-            code, body = docker("GET", f"/containers/{CONTAINER}/json", timeout=3)
-            if code == 200:
-                return json.loads(body)["State"]["Status"]
-            return "missing" if code == 404 else None
-        except Exception:
-            return None
+        return "running" if kiwix_get("/") == 200 else None
 
     def status(self):
         cur = self.current_file()
@@ -253,17 +243,24 @@ class Manager:
                 )
             name = f"wikipedia_{cfg['lang']}_{cfg['flavor']}_{date}.zim"
             self.latest_available = name
+            switched = False
             if self.current_file() == name and self.served == name:
                 self.say(f"Up to date with {name}")
             else:
+                switched = True
                 if not (DATA_DIR / name).exists():
                     self.download(name)
                 self.activate(name)
-                self.restart_kiwix()
                 self.served = name
+                self.say(f"Switched the library to {name}")
+            live = self.wait_for_reload(self.library_book_id(LIBRARY_FILE))
+            if live and self.served == name and switched:
                 self.say(f"Now serving {name}")
+            elif not live:
+                self.say(f"kiwix-serve at {KIWIX_URL} isn't serving {name} yet. "
+                         "Is the kiwix container running? It loads library.xml when it starts.", "warn")
             if not cfg["keep_old"]:
-                self.cleanup(name)
+                self.cleanup(name, live)
             ok = True
         except Cancelled:
             self.say("Download cancelled. The partial file is kept, so the next attempt resumes it.")
@@ -371,40 +368,108 @@ class Manager:
             raise RuntimeError(f"Checksum mismatch for {name}; the file was deleted and will be downloaded again")
         self.say("Checksum verified")
 
+    # ---------- library.xml ----------
+    @staticmethod
+    def library_book_id(path):
+        try:
+            book = ElementTree.parse(path).getroot().find("book")
+            return book.get("id") if book is not None else None
+        except Exception:
+            return None
+
+    def build_library(self, name):
+        """Write a temporary library.xml listing `name` under the stable link path.
+
+        The book's path is the link (wikipedia.zim), so kiwix-serve keeps serving it at
+        /content/wikipedia whatever the edition. Returns the temporary file.
+        """
+        tmp = DATA_DIR / (LIBRARY_FILE.name + ".tmp")
+        tmp.write_text(EMPTY_LIBRARY)  # start from an XML file so kiwix-manage keeps the XML format
+        if not name:
+            return tmp
+        cmd = [KIWIX_MANAGE, str(tmp), "add", f"--zimPathToSave={DATA_DIR / LINK_NAME}", str(DATA_DIR / name)]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        except FileNotFoundError:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"{KIWIX_MANAGE} isn't installed in this container; rebuild the manager image")
+        if r.returncode != 0 or not self.library_book_id(tmp):
+            tmp.unlink(missing_ok=True)
+            detail = (r.stderr or r.stdout or "").strip().splitlines()
+            raise RuntimeError(f"kiwix-manage couldn't add {name} to the library"
+                               + (f" ({detail[-1]})" if detail else ""))
+        return tmp
+
+    @staticmethod
+    def publish_library(tmp):
+        """Move tmp over library.xml if it differs. Returns True if library.xml changed."""
+        new = tmp.read_bytes()
+        try:
+            old, old_mtime = LIBRARY_FILE.read_bytes(), LIBRARY_FILE.stat().st_mtime
+        except FileNotFoundError:
+            old, old_mtime = None, 0
+        if new == old:
+            tmp.unlink()
+            return False
+        os.replace(tmp, LIBRARY_FILE)
+        # kiwix-serve reloads when the mtime goes up, compared in whole seconds,
+        # so make sure two writes in the same second still count as a change.
+        t = max(time.time(), int(old_mtime) + 1)
+        os.utime(LIBRARY_FILE, (t, t))
+        return True
+
+    def sync_library(self):
+        """On startup, make library.xml match the current link (or be empty) so kiwix-serve can start."""
+        cur = self.current_file()
+        try:
+            if self.publish_library(self.build_library(cur)):
+                self.say(f"Wrote {LIBRARY_FILE.name} for " + (cur or "an empty library"))
+        except Exception as e:
+            self.say(str(e), "error")
+            if not LIBRARY_FILE.exists():  # kiwix-serve won't start without one
+                LIBRARY_FILE.write_text(EMPTY_LIBRARY)
+
     def activate(self, name):
         link = DATA_DIR / LINK_NAME
         if link.exists() and not link.is_symlink():
             raise RuntimeError(
                 f"{LINK_NAME} is a regular file, not a link. Rename or move it so the manager can manage it"
             )
+        lib_tmp = self.build_library(name)  # reads the new file's metadata before anything changes
         tmp = DATA_DIR / (LINK_NAME + ".tmp")
         if tmp.is_symlink() or tmp.exists():
             tmp.unlink()
         os.symlink(name, tmp)  # relative, so it resolves inside the kiwix container too
         os.replace(tmp, link)
+        self.publish_library(lib_tmp)
 
-    def restart_kiwix(self):
-        self.phase = "restarting"
-        try:
-            code, body = docker("POST", f"/containers/{CONTAINER}/restart?t=10", timeout=90)
-        except FileNotFoundError:
-            raise RuntimeError(f"Docker socket not found at {DOCKER_SOCK}. Mount it into this container")
-        except PermissionError:
-            raise RuntimeError(f"No permission to use the Docker socket at {DOCKER_SOCK}")
-        if code == 404:
-            raise RuntimeError(f"No container named '{CONTAINER}'. Set KIWIX_CONTAINER to its name")
-        if code >= 300:
-            raise RuntimeError(f"Docker refused the restart (HTTP {code}): {body[:200].decode(errors='replace')}")
-        self.say(f"Restarted {CONTAINER}")
+    def wait_for_reload(self, book_id):
+        """True once kiwix-serve lists book_id; False if it doesn't within RELOAD_TIMEOUT."""
+        if not book_id:
+            return False
+        self.phase = "reloading"
+        deadline = time.time() + RELOAD_TIMEOUT
+        while True:
+            if kiwix_get(f"/catalog/v2/entry/{book_id}") == 200:
+                return True
+            if time.time() >= deadline or self.cancel.is_set():
+                return False
+            time.sleep(2)
 
-    def cleanup(self, keep):
-        for p in DATA_DIR.glob("wikipedia_*.zim*"):
-            if p.name == keep or p.is_symlink():
-                continue
-            if p.suffix in (".zim", ".part"):
+    def cleanup(self, keep, live=True):
+        old = [p for p in DATA_DIR.glob("wikipedia_*.zim*")
+               if p.name != keep and not p.is_symlink() and p.suffix in (".zim", ".part")]
+        if not live and any(p.suffix == ".zim" for p in old):
+            # kiwix-serve may still have an old edition open; delete it once it has switched over
+            self.say("Keeping older editions until kiwix-serve is serving the new one")
+            old = [p for p in old if p.suffix == ".part"]
+        for p in old:
+            try:
                 size = p.stat().st_size
                 p.unlink()
                 self.say(f"Removed {p.name} ({fmt(size)})")
+            except OSError as e:
+                self.say(f"Couldn't remove {p.name}: {e}", "warn")
 
     # ---------- control ----------
     def trigger(self):
@@ -547,8 +612,9 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    M.sync_library()
     threading.Thread(target=M.worker, daemon=True).start()
     if not PASSWORD:
         M.say("ADMIN_PASSWORD is not set; the portal is open to anyone who can reach it", "warn")
-    print(f"Kiwix manager on :{PORT}, managing container '{CONTAINER}'", flush=True)
+    print(f"Kiwix manager on :{PORT}, managing {LIBRARY_FILE} for kiwix-serve at {KIWIX_URL}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

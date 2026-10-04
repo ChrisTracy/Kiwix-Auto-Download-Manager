@@ -1,0 +1,94 @@
+name: Publish Docker image
+
+# Builds the manager image for x86-64 and ARM64.
+# - Pull requests: build only (nothing is pushed)
+# - Pushes to main: push :latest and :sha-<commit>
+# - Tags like v1.2.3: push :1.2.3, :1.2 and :1
+# Needs repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: kiwix-auto-download-manager
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  check:
+    name: Check Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile app.py schedule.py
+      - name: Validate schedules
+        run: |
+          python - <<'PY'
+          import schedule as s
+          s.normalize(s.DEFAULTS)
+          s.normalize({"mode": "cron", "cron": "0 4 * * sun", "tz": "America/Chicago"})
+          print("schedule.py OK")
+          PY
+
+  docker:
+    name: Build and push
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (for ARM builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Decide whether to push
+        id: push
+        run: echo "enabled=${{ github.event_name != 'pull_request' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        if: steps.push.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME || 'local' }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=pr
+
+      - name: Build (and push, except on pull requests)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ env.PLATFORMS }}
+          push: ${{ steps.push.outputs.enabled == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

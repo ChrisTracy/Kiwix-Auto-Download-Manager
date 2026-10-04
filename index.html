@@ -602,9 +602,7 @@ function render(s) {
   pill.href = `${location.protocol}//${location.hostname}:${s.kiwix_port}/`;
   const c = s.container;
   if (c === "running") { pill.dataset.s = "up"; pill.textContent = "Library online"; }
-  else if (c === "missing") { pill.dataset.s = "down"; pill.textContent = "kiwix container not found"; }
-  else if (c) { pill.dataset.s = "down"; pill.textContent = `Library ${c}`; }
-  else { pill.dataset.s = "unknown"; pill.textContent = "Can't reach Docker"; }
+  else { pill.dataset.s = "down"; pill.textContent = "Library offline"; }
 
   // Edition hero
   const cur = s.current;
@@ -649,7 +647,7 @@ function render(s) {
       checking: "Looking for a newer edition",
       downloading: "Downloading",
       verifying: "Verifying the checksum",
-      restarting: "Restarting the library",
+      reloading: "Waiting for the library to reload",
     };
     $("job-title").textContent = titles[s.phase] || s.phase;
     const p = s.progress;

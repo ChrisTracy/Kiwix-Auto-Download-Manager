@@ -2,27 +2,30 @@ services:
   kiwix:
     image: ghcr.io/kiwix/kiwix-serve
     container_name: kiwix
-    command: wikipedia.zim          # stable symlink the manager keeps pointed at the newest edition
+    command: --monitorLibrary --library /data/library.xml
     volumes:
-      - ./data:/data
+      - data:/data
     ports:
       - "8080:8080"
+    depends_on:
+      - manager
     restart: unless-stopped
 
   manager:
-    build: ./manager
+    image: christracy/kiwix-auto-download-manager:latest
     container_name: kiwix-manager
     environment:
-      KIWIX_CONTAINER: kiwix        # must match the container_name above
+      KIWIX_URL: http://kiwix:8080  # how the manager reaches kiwix-serve inside the compose network
       KIWIX_PORT: "8080"            # host port, used for the "Library online" link
-      WIKI_LANG: bm                 # first-run defaults; change later in the portal
+      WIKI_LANG: en                 # first-run defaults; change later in the portal
       WIKI_FLAVOR: all_maxi
       TZ: UTC                       # default time zone for schedules, e.g. Europe/Berlin
       # SCHEDULE_CRON: "0 4 * * sun"  # optional first-run schedule; otherwise Sundays 04:00
       ADMIN_PASSWORD: change-me     # basic auth for the portal; any username works
     volumes:
-      - ./data:/data
-      - /var/run/docker.sock:/var/run/docker.sock
+      - data:/data
     ports:
       - "8090:8090"
     restart: unless-stopped
+volumes:
+  data:
