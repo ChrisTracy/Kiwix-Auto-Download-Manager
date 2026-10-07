@@ -21,7 +21,7 @@ services:
       WIKI_FLAVOR: all_maxi
       TZ: UTC                       # default time zone for schedules, e.g. Europe/Berlin
       # SCHEDULE_CRON: "0 4 * * sun"  # optional first-run schedule; otherwise Sundays 04:00
-      ADMIN_PASSWORD: change-me     # basic auth for the portal; any username works
+      ADMIN_PASSWORD: change-me     # portal sign-in password
     volumes:
       - data:/data
     ports:

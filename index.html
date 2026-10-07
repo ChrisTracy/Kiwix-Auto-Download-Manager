@@ -50,6 +50,10 @@ header.top h1 { font: 600 1rem/1.2 var(--sans); margin: 0; color: var(--muted); 
 .pill[data-s="down"]::before { background: var(--red); }
 .pill[data-s="unknown"]::before { background: var(--amber); }
 a.pill:hover { color: var(--ink); }
+.top-right { display: flex; align-items: center; gap: 16px; }
+.signout { font-size: .875rem; color: var(--muted); text-underline-offset: 3px; }
+.signout:hover { color: var(--ink); }
+.signout[hidden] { display: none; }
 
 /* The edition: the one loud thing on the page */
 .edition { margin: 44px 0 8px; }
@@ -166,7 +170,10 @@ button.link { background: none; border: 0; padding: 2px 0; color: var(--accent);
 <main>
   <header class="top">
     <h1>Kiwix manager</h1>
-    <a class="pill" id="pill" data-s="unknown" target="_blank" rel="noopener">Checking library</a>
+    <div class="top-right">
+      <a class="pill" id="pill" data-s="unknown" target="_blank" rel="noopener">Checking library</a>
+      <a class="signout" id="signout" href="/logout" hidden>Sign out</a>
+    </div>
   </header>
 
   <div class="edition" aria-live="polite">
@@ -381,6 +388,7 @@ function parseName(file) {
 async function api(path, body) {
   const opts = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
   const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = "/login"; throw new Error("Signed out"); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
   return data;
@@ -594,6 +602,7 @@ function showError(text) { const el = $("err"); el.hidden = !text; el.textConten
 
 /* ---------- render ---------- */
 function render(s) {
+  $("signout").hidden = !s.auth;
   status = s;
   if (!formLoaded) loadForm(s.config);
 

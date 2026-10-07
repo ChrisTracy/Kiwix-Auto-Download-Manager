@@ -18,6 +18,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -66,6 +67,24 @@ DEFAULT_CONFIG = {
 }
 
 INDEX_HTML = (Path(__file__).parent / "index.html").read_bytes()
+LOGIN_HTML = (Path(__file__).parent / "login.html").read_bytes()
+SESSION_COOKIE = "kiwix_session"
+SESSION_DAYS = 30
+# Derived from the password, so changing ADMIN_PASSWORD signs everyone out.
+SESSION_KEY = hmac.new(PASSWORD.encode(), b"kiwix-manager-session", hashlib.sha256).digest()
+
+
+def make_session():
+    exp = str(int(time.time()) + SESSION_DAYS * 86400)
+    return exp + "." + hmac.new(SESSION_KEY, exp.encode(), hashlib.sha256).hexdigest()
+
+
+def valid_session(token):
+    exp, _, sig = (token or "").partition(".")
+    if not exp.isdigit() or int(exp) < time.time():
+        return False
+    good = hmac.new(SESSION_KEY, exp.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, good)
 
 
 class Cancelled(Exception):
@@ -533,9 +552,20 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def _cookie(self, name):
+        for part in self.headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == name:
+                return v
+        return None
+
     def _authorized(self):
         if not PASSWORD:
             return True
+        if valid_session(self._cookie(SESSION_COOKIE)):
+            return True
+        # Basic auth still works for scripts and curl, but we never ask for it,
+        # so browsers get the login page instead of the native popup.
         header = self.headers.get("Authorization", "")
         if header.startswith("Basic "):
             try:
@@ -544,11 +574,33 @@ class Handler(BaseHTTPRequestHandler):
                     return True
             except Exception:
                 pass
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Kiwix manager"')
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        if self.path.startswith("/api/"):
+            self._json({"error": "Signed out", "login": True}, 401)
+        else:
+            self._redirect("/login")
         return False
+
+    def _redirect(self, where, cookie=None):
+        self.send_response(303)
+        self.send_header("Location", where)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _session_cookie(self, value, max_age):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"{SESSION_COOKIE}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}"
+
+    def _login(self):
+        length = min(int(self.headers.get("Content-Length") or 0), 4096)
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode(errors="replace"))
+        pw = (form.get("password") or [""])[0]
+        if PASSWORD and hmac.compare_digest(pw.encode(), PASSWORD.encode()):
+            return self._redirect("/", self._session_cookie(make_session(), SESSION_DAYS * 86400))
+        time.sleep(1)  # slow down guessing
+        self._redirect("/login?e=1")
 
     def _send(self, code, body, ctype):
         self.send_response(code)
@@ -562,13 +614,19 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj).encode(), "application/json")
 
     def do_GET(self):
+        path = self.path.split("?")[0]
+        if path == "/login":
+            if not PASSWORD or valid_session(self._cookie(SESSION_COOKIE)):
+                return self._redirect("/")
+            return self._send(200, LOGIN_HTML, "text/html; charset=utf-8")
+        if path == "/logout":
+            return self._redirect("/login" if PASSWORD else "/", self._session_cookie("", 0))
         if not self._authorized():
             return
-        path = self.path.split("?")[0]
         if path == "/":
             self._send(200, INDEX_HTML, "text/html; charset=utf-8")
         elif path == "/api/status":
-            self._json(M.status())
+            self._json(dict(M.status(), auth=bool(PASSWORD)))
         elif path == "/api/catalog":
             try:
                 cat = M.fetch_catalog(force="refresh=1" in self.path)
@@ -579,6 +637,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "Not found"}, 404)
 
     def do_POST(self):
+        if self.path.split("?")[0] == "/login":
+            return self._login()
         if not self._authorized():
             return
         try:

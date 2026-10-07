@@ -48,7 +48,7 @@ Put your settings in a file named `docker-compose.override.yml` next to `docker-
 services:
   manager:
     environment:
-      ADMIN_PASSWORD: pick-a-password   # portal login; any username works
+      ADMIN_PASSWORD: pick-a-password   # portal login password
       WIKI_LANG: en                     # first-run language
       WIKI_FLAVOR: all_maxi             # first-run edition
       TZ: America/Chicago               # first-run time zone for schedules
@@ -69,7 +69,7 @@ Then open:
 
 | Address | What it is |
 |---|---|
-| http://localhost:8090 | Manager portal. Log in with any username and the `ADMIN_PASSWORD` you set. |
+| http://localhost:8090 | Manager portal. Sign in with the `ADMIN_PASSWORD` you set. |
 | http://localhost:8080 | The Wikipedia library served by kiwix-serve. |
 
 The first start downloads the chosen edition right away. Progress shows in the portal. Until the download finishes, the library on port 8080 is empty.
@@ -124,7 +124,7 @@ Set these in the `manager` service's `environment:` section. Language, edition a
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ADMIN_PASSWORD` | *(none)* | Password for the portal (basic auth, any username). **Set this.** If it is empty, the portal is open to anyone who can reach it. |
+| `ADMIN_PASSWORD` | *(none)* | Password for the portal's sign-in page (sessions last 30 days; HTTP basic auth with any username also works for scripts). **Set this.** If it is empty, the portal is open to anyone who can reach it. |
 | `WIKI_LANG` | `bm` | First-run language code, such as `en`, `de` or `fr`. |
 | `WIKI_FLAVOR` | `all_maxi` | First-run edition, such as `all_maxi`, `all_nopic` or `all_mini`. |
 | `TZ` | `UTC` | First-run time zone for schedules, such as `America/Chicago`. |

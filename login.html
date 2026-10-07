@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sign in · Kiwix manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+<style>
+:root {
+  --bg: #E6EBEE; --surface: #F6F8F9; --ink: #1C2733; --muted: #586572;
+  --rule: #C7D0D7; --accent: #2C6B5B; --accent-ink: #FFFFFF; --red: #A23838;
+  --serif: "Iowan Old Style", "Charter", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131A21; --surface: #1A232C; --ink: #E2E7EB; --muted: #95A2AE;
+    --rule: #2B3742; --accent: #6DBBA5; --accent-ink: #0F1A17; --red: #E67C7C;
+    color-scheme: dark;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  background-image: radial-gradient(1200px 600px at 50% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%);
+  color: var(--ink);
+  font: 16px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  display: grid; place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+}
+.card {
+  width: 100%; max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 16px;
+  padding: 36px 32px 30px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 12px 40px -12px rgb(0 0 0 / .18);
+  animation: rise .35s ease-out both;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) { .card { animation: none; } }
+.mark {
+  width: 48px; height: 48px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent);
+  margin-bottom: 20px;
+}
+h1 { font: 400 1.875rem/1.15 var(--serif); margin: 0 0 6px; letter-spacing: -0.01em; }
+.sub { margin: 0 0 26px; color: var(--muted); font-size: .9375rem; }
+label { display: block; font-size: .875rem; font-weight: 600; margin-bottom: 6px; }
+.pw { position: relative; }
+input {
+  font: inherit; color: inherit; width: 100%;
+  padding: 11px 64px 11px 14px;
+  border: 1px solid var(--rule); border-radius: 10px; background: var(--bg);
+  transition: border-color .15s, box-shadow .15s;
+}
+input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+input[aria-invalid=true] { border-color: var(--red); }
+.toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  font: 600 .8125rem var(--sans); color: var(--muted);
+  background: none; border: 0; padding: 6px 8px; border-radius: 6px; cursor: pointer;
+}
+.toggle:hover { color: var(--ink); }
+.toggle:focus-visible, button.go:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.err {
+  display: flex; gap: 8px; align-items: center;
+  margin: 10px 0 0; color: var(--red); font-size: .875rem;
+}
+.err[hidden] { display: none; }
+button.go {
+  margin-top: 22px; width: 100%;
+  font: 600 1rem var(--sans); color: var(--accent-ink);
+  background: var(--accent); border: 1px solid var(--accent);
+  padding: 11px 16px; border-radius: 10px; cursor: pointer;
+  transition: filter .15s, transform .05s;
+}
+button.go:hover { filter: brightness(1.07); }
+button.go:active { transform: translateY(1px); }
+button.go:disabled { opacity: .6; cursor: default; }
+.foot { margin: 22px 0 0; text-align: center; font-size: .8125rem; color: var(--muted); }
+.foot code { font-size: .8125rem; }
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="mark" aria-hidden="true">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 19.5V5a2 2 0 0 1 2-2h13v15H6a2 2 0 0 0-2 2Z"/><path d="M4 19.5A2 2 0 0 0 6 21.5h13"/><path d="M9 7h6M9 10.5h4"/>
+    </svg>
+  </div>
+  <h1>Kiwix manager</h1>
+  <p class="sub">Sign in to manage your offline Wikipedia.</p>
+  <form method="post" action="/login" id="form">
+    <label for="pw">Password</label>
+    <div class="pw">
+      <input id="pw" name="password" type="password" autocomplete="current-password" required autofocus aria-describedby="err">
+      <button type="button" class="toggle" id="toggle" aria-controls="pw" aria-pressed="false">Show</button>
+    </div>
+    <p class="err" id="err" role="alert" hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/></svg>
+      That password didn't work. Try again.
+    </p>
+    <button class="go" type="submit" id="go">Sign in</button>
+  </form>
+  <p class="foot">The password is the <code>ADMIN_PASSWORD</code> set for this server.</p>
+</main>
+<script>
+const pw = document.getElementById("pw"), t = document.getElementById("toggle");
+if (new URLSearchParams(location.search).has("e")) {
+  document.getElementById("err").hidden = false;
+  pw.setAttribute("aria-invalid", "true");
+  history.replaceState(null, "", "/login");
+}
+pw.addEventListener("input", () => { pw.removeAttribute("aria-invalid"); document.getElementById("err").hidden = true; });
+t.addEventListener("click", () => {
+  const show = pw.type === "password";
+  pw.type = show ? "text" : "password";
+  t.textContent = show ? "Hide" : "Show";
+  t.setAttribute("aria-pressed", String(show));
+  pw.focus();
+});
+document.getElementById("form").addEventListener("submit", () => {
+  const b = document.getElementById("go"); b.disabled = true; b.textContent = "Signing in…";
+});
+</script>
+</body>
+</html>
